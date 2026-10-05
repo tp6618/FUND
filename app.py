@@ -10,27 +10,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for styling
-st.markdown("""
-    <style>
-    .main {
-        background-color: #0e1117;
-    }
-    .stMetric {
-        background-color: #161b22;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .metric-card {
-        background-color: #1f242d;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🇮🇳 Indian Long-Term Stock Fundamental & Governance Analyzer")
 st.markdown("""
 *Quantitative screens are your first filter. Always review annual reports, management integrity, and corporate governance before investing in Indian equities.*
@@ -38,12 +17,6 @@ st.markdown("""
 
 # Sidebar Input
 st.sidebar.header("Stock Selection")
-default_stocks = [
-    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
-    "ITC.NS", "LT.NS", "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", 
-    "ASIANPAINT.NS", "TITAN.NS", "BAJFINANCE.NS", "MARUTI.NS"
-]
-
 stock_input = st.sidebar.text_input("Enter NSE/BSE Symbol (e.g., RELIANCE.NS, TCS.NS, TATAMOTORS.NS):", value="RELIANCE.NS")
 symbol = stock_input.strip().upper()
 
@@ -58,17 +31,19 @@ skin_in_game = st.sidebar.checkbox("4. High Promoter Skin in the Game (> 40% or 
 economic_moat = st.sidebar.checkbox("5. Identifiable Economic Moat (Pricing power / Brand / Switching costs)?", value=True)
 
 @st.cache_data(ttl=3600)
-def fetch_stock_info(ticker_symbol):
+def fetch_stock_data(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
         info = stock.info
-        return info
+        financials = stock.financials
+        balance_sheet = stock.balance_sheet
+        return info, financials, balance_sheet
     except Exception as e:
-        return None
+        return None, None, None
 
 if symbol:
     with st.spinner(f"Fetching data and running quantitative filter for {symbol}..."):
-        info = fetch_stock_info(symbol)
+        info, financials, balance_sheet = fetch_stock_data(symbol)
         
     if not info or 'longName' not in info:
         st.error(f"Could not retrieve data for `{symbol}`. Please check if the ticker symbol is correct (e.g., must end with `.NS` for NSE or `.BO` for BSE).")
@@ -82,21 +57,56 @@ if symbol:
 
         st.markdown("---")
         
+        # --- ROBUST METRIC CALCULATION FROM FINANCIAL STATEMENTS ---
+        roce = info.get('returnOnCapitalEmployed', None)
+        roe = info.get('returnOnEquity', None)
+        
+        # Fallback calculation using financials & balance sheet if yfinance info misses them
+        try:
+            if (roce is None or roe is None) and financials is not None and not financials.empty and balance_sheet is not None and not balance_sheet.empty:
+                latest_col = financials.columns[0]
+                
+                # EBIT / Operating Income
+                ebit = financials.loc['Operating Income'][latest_col] if 'Operating Income' in financials.index else None
+                if ebit is None and 'EBIT' in financials.index:
+                    ebit = financials.loc['EBIT'][latest_col]
+                
+                # Net Income
+                net_income = financials.loc['Net Income'][latest_col] if 'Net Income' in financials.index else None
+                
+                # Total Assets & Total Liabilities for Capital Employed
+                total_assets = balance_sheet.loc['Total Assets'][latest_col] if 'Total Assets' in balance_sheet.index else None
+                total_liab = balance_sheet.loc['Total Liab'][latest_col] if 'Total Liab' in balance_sheet.index else 0
+                if total_liab == 0 and 'Total Liabilities Net Minority Interest' in balance_sheet.index:
+                    total_liab = balance_sheet.loc['Total Liabilities Net Minority Interest'][latest_col]
+                
+                # Stockholders Equity
+                equity = balance_sheet.loc['Stockholders Equity'][latest_col] if 'Stockholders Equity' in balance_sheet.index else None
+                if equity is None and 'Common Stock Equity' in balance_sheet.index:
+                    equity = balance_sheet.loc['Common Stock Equity'][latest_col]
+                
+                # Calculate ROCE = EBIT / (Total Assets - Current Liabilities) approx as Capital Employed
+                if roce is None and ebit and total_assets and total_liab:
+                    capital_employed = total_assets - total_liab
+                    if capital_employed > 0:
+                        roce = ebit / capital_employed
+                
+                # Calculate ROE = Net Income / Stockholders Equity
+                if roe is None and net_income and equity and equity > 0:
+                    roe = net_income / equity
+        except Exception:
+            pass
+
+        debt_to_equity = info.get('debtToEquity', None)
+        if debt_to_equity is not None:
+            debt_to_equity = debt_to_equity / 100.0
+            
+        operating_margins = info.get('operatingMargins', None)
+        
         # --- TIER 1: QUANTITATIVE FILTER (SCREENER METRICS) ---
         st.subheader("📊 Tier 1: Quantitative Filter (Financial Metrics)")
         
-        # Extract key metrics safely
-        roce = info.get('returnOnCapitalEmployed', None)
-        roe = info.get('returnOnEquity', None)
-        debt_to_equity = info.get('debtToEquity', None)
-        if debt_to_equity is not None:
-            debt_to_equity = debt_to_equity / 100.0 # yfinance often returns D/E as percentage or ratio
-            
-        profit_margins = info.get('profitMargins', None)
-        operating_margins = info.get('operatingMargins', None)
-        
         q_score = 0
-        
         q1, q2, q3, q4 = st.columns(4)
         
         with q1:
@@ -172,13 +182,12 @@ if symbol:
         st.subheader("🎯 Long-Term Investment Verdict")
         
         if quant_pass and gov_checks_passed >= 4:
-            st.success("🟢 **STRONG LONG-TERM COMPOUNDER**: This company has cleared both your quantitative filters and rigorous governance audit. Suitable for deeper due diligence and phased long-term accumulation.")
+            st.success("🟢 **STRONG LONG-TERM COMPOUNDER**: This company has cleared both your quantitative filters and rigorous governance audit.")
         elif quant_pass and gov_checks_passed < 4:
-            st.warning("🟡 **QUALITATIVE AUDIT REQUIRED**: While the numbers look solid on Screener, governance or qualitative checkpoints are unmet or unchecked. **Do not invest** until you personally review the annual report notes for related-party transactions and promoter pledges.")
+            st.warning("🟡 **QUALITATIVE AUDIT REQUIRED**: Numbers look solid, but governance checkpoints are unmet or unchecked.")
         else:
-            st.error("🔴 **HIGH RISK / AVOID**: The company fails key quantitative thresholds (ROCE/Debt/Margins). Exercise extreme caution or discard from your long-term watch-list.")
+            st.error("🔴 **HIGH RISK / AVOID**: The company fails key quantitative thresholds.")
 
-        # Additional Company Summary Info
         with st.expander("📖 Business Summary & Additional Metrics"):
             st.write(info.get('longBusinessSummary', 'No business summary available.'))
             col_a, col_b, col_c = st.columns(3)
