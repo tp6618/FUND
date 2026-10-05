@@ -57,52 +57,72 @@ if symbol:
 
         st.markdown("---")
         
-        # --- ROBUST METRIC CALCULATION FROM FINANCIAL STATEMENTS ---
+        # --- ROBUST METRIC CALCULATION (ROCE, ROE, DEBT-TO-EQUITY) ---
         roce = info.get('returnOnCapitalEmployed', None)
         roe = info.get('returnOnEquity', None)
+        debt_to_equity = info.get('debtToEquity', None)
+        if debt_to_equity is not None and debt_to_equity > 10:  # yfinance sometimes returns D/E as a percentage (e.g. 85.5 instead of 0.855)
+            debt_to_equity = debt_to_equity / 100.0
+
+        operating_margins = info.get('operatingMargins', None)
         
-        # Fallback calculation using financials & balance sheet if yfinance info misses them
+        # Fallback calculations from balance sheet & financials if needed
         try:
-            if (roce is None or roe is None) and financials is not None and not financials.empty and balance_sheet is not None and not balance_sheet.empty:
-                latest_col = financials.columns[0]
+            if balance_sheet is not None and not balance_sheet.empty:
+                latest_col = balance_sheet.columns[0]
                 
-                # EBIT / Operating Income
-                ebit = financials.loc['Operating Income'][latest_col] if 'Operating Income' in financials.index else None
-                if ebit is None and 'EBIT' in financials.index:
-                    ebit = financials.loc['EBIT'][latest_col]
+                # Equity lookup
+                equity = None
+                for eq_key in ['Stockholders Equity', 'Common Stock Equity', 'Total Equity Gross Minority Interest']:
+                    if eq_key in balance_sheet.index:
+                        equity = balance_sheet.loc[eq_key][latest_col]
+                        if equity and equity > 0:
+                            break
                 
-                # Net Income
-                net_income = financials.loc['Net Income'][latest_col] if 'Net Income' in financials.index else None
+                # Total Debt lookup
+                total_debt = None
+                for debt_key in ['Total Debt', 'Short Long Term Debt', 'Long Term Debt']:
+                    if debt_key in balance_sheet.index:
+                        val = balance_sheet.loc[debt_key][latest_col]
+                        if val and not pd.isna(val):
+                            total_debt = val
+                            break
                 
-                # Total Assets & Total Liabilities for Capital Employed
-                total_assets = balance_sheet.loc['Total Assets'][latest_col] if 'Total Assets' in balance_sheet.index else None
-                total_liab = balance_sheet.loc['Total Liab'][latest_col] if 'Total Liab' in balance_sheet.index else 0
-                if total_liab == 0 and 'Total Liabilities Net Minority Interest' in balance_sheet.index:
-                    total_liab = balance_sheet.loc['Total Liabilities Net Minority Interest'][latest_col]
-                
-                # Stockholders Equity
-                equity = balance_sheet.loc['Stockholders Equity'][latest_col] if 'Stockholders Equity' in balance_sheet.index else None
-                if equity is None and 'Common Stock Equity' in balance_sheet.index:
-                    equity = balance_sheet.loc['Common Stock Equity'][latest_col]
-                
-                # Calculate ROCE = EBIT / (Total Assets - Current Liabilities) approx as Capital Employed
-                if roce is None and ebit and total_assets and total_liab:
-                    capital_employed = total_assets - total_liab
-                    if capital_employed > 0:
-                        roce = ebit / capital_employed
-                
-                # Calculate ROE = Net Income / Stockholders Equity
-                if roe is None and net_income and equity and equity > 0:
-                    roe = net_income / equity
+                # If total debt wasn't a direct row, approximate using Total Liabilities - Current Liabilities or similar if possible
+                if total_debt is None:
+                    total_liab = None
+                    for liab_key in ['Total Liabilities Net Minority Interest', 'Total Liab']:
+                        if liab_key in balance_sheet.index:
+                            total_liab = balance_sheet.loc[liab_key][latest_col]
+                            break
+                    current_liab = balance_sheet.loc['Current Liabilities'][latest_col] if 'Current Liabilities' in balance_sheet.index else 0
+                    if total_liab and current_liab:
+                        total_debt = total_liab - current_liab
+
+                # Calculate Debt-to-Equity if missing
+                if debt_to_equity is None and total_debt is not None and equity and equity > 0:
+                    debt_to_equity = total_debt / equity
+
+                # Fallback ROCE / ROE calculation
+                if financials is not None and not financials.empty:
+                    fin_col = financials.columns[0]
+                    ebit = financials.loc['Operating Income'][fin_col] if 'Operating Income' in financials.index else None
+                    if ebit is None and 'EBIT' in financials.index:
+                        ebit = financials.loc['EBIT'][fin_col]
+                    
+                    net_income = financials.loc['Net Income'][fin_col] if 'Net Income' in financials.index else None
+                    total_assets = balance_sheet.loc['Total Assets'][latest_col] if 'Total Assets' in balance_sheet.index else None
+                    
+                    if roce is None and ebit and total_assets and equity:
+                        capital_employed = total_assets - (total_assets - equity - (total_debt or 0))
+                        if capital_employed > 0:
+                            roce = ebit / capital_employed
+                    
+                    if roe is None and net_income and equity and equity > 0:
+                        roe = net_income / equity
         except Exception:
             pass
 
-        debt_to_equity = info.get('debtToEquity', None)
-        if debt_to_equity is not None:
-            debt_to_equity = debt_to_equity / 100.0
-            
-        operating_margins = info.get('operatingMargins', None)
-        
         # --- TIER 1: QUANTITATIVE FILTER (SCREENER METRICS) ---
         st.subheader("📊 Tier 1: Quantitative Filter (Financial Metrics)")
         
