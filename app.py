@@ -3,480 +3,201 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+# Page Configuration
 st.set_page_config(
-    page_title="Indian Stock Fundamental Scoring Calculator",
-    page_icon="🇮🇳",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Indian Stock Fundamental & Governance Analyzer",
+    page_icon="📈",
+    layout="wide"
 )
 
+# Custom CSS for styling
 st.markdown("""
     <style>
     .main {
-        background-color: #0f172a;
-        color: #f8fafc;
+        background-color: #0e1117;
     }
-    .stTextInput > div > div > input {
-        background-color: #1e293b;
-        color: #f8fafc;
-        border-radius: 8px;
-        border: 1px solid #334155;
+    .stMetric {
+        background-color: #161b22;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .metric-card {
-        background-color: #1e293b;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #334155;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
-    .pass-badge {
-        background-color: #065f46;
-        color: #6ee7b7;
-        padding: 4px 12px;
-        border-radius: 9999px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .fail-badge {
-        background-color: #991b1b;
-        color: #fca5a5;
-        padding: 4px 12px;
-        border-radius: 9999px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .warning-badge {
-        background-color: #92400e;
-        color: #fde68a;
-        padding: 4px 12px;
-        border-radius: 9999px;
-        font-weight: 600;
-        font-size: 0.85rem;
+        background-color: #1f242d;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
 
+st.title("🇮🇳 Indian Long-Term Stock Fundamental & Governance Analyzer")
+st.markdown("""
+*Quantitative screens are your first filter. Always review annual reports, management integrity, and corporate governance before investing in Indian equities.*
+""")
+
+# Sidebar Input
+st.sidebar.header("Stock Selection")
+# Popular Indian stocks default list
+default_stocks = [
+    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
+    "ITC.NS", "LT.NS", "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", 
+    "ASIANPAINT.NS", "TITAN.NS", "BAJFINANCE.NS", "MARUTI.NS"
+]
+
+stock_input = st.sidebar.text_input("Enter NSE/BSE Symbol (e.g., RELIANCE.NS, TCS.NS, TATAMOTORS.NS):", value="RELIANCE.NS")
+symbol = stock_input.strip().upper()
+
+st.sidebar.markdown("---")
+st.sidebar.header("Tier 2: Governance & Qualitative Audit Checklist")
+st.sidebar.markdown("Verify these manually from the Annual Report / Screener.in before final allocation:")
+
+pledged_shares = st.sidebar.checkbox("1. Promoter Pledged Shares < 5% / Zero?", value=True)
+clean_rpt = st.sidebar.checkbox("2. Clean Related-Party Transactions (No suspicious loans/advances)?", value=True)
+auditor_stability = st.sidebar.checkbox("3. Stable Auditor Track Record (No frequent sudden resignations)?", value=True)
+skin_in_game = st.sidebar.checkbox("4. High Promoter Skin in the Game (> 40% or solid institutional backing)?", value=True)
+economic_moat = st.sidebar.checkbox("5. Identifiable Economic Moat (Pricing power / Brand / Switching costs)?", value=True)
+
 @st.cache_data(ttl=3600)
-def fetch_indian_stock_data(ticker_symbol):
-    """
-    Fetches financial statements, balance sheets, and key statistics
-    for Indian stocks (NSE/BSE) using yfinance. Automatically appends .NS if missing.
-    """
-    clean_ticker = ticker_symbol.strip().upper()
-    if not clean_ticker.endswith(".NS") and not clean_ticker.endswith(".BO"):
-        query_symbol = clean_ticker + ".NS"
-    else:
-        query_symbol = clean_ticker
-        
+def fetch_stock_data(ticker):
     try:
-        stock = yf.Ticker(query_symbol)
+        stock = yf.Ticker(ticker)
         info = stock.info
         
-        # Validate ticker existence
-        if not info or ('longName' not in info and 'shortName' not in info):
-            # Try BSE fallback if NS failed
-            if query_symbol.endswith(".NS"):
-                query_symbol = clean_ticker + ".BO"
-                stock = yf.Ticker(query_symbol)
-                info = stock.info
-                if not info or ('longName' not in info and 'shortName' not in info):
-                    return None, f"Ticker '{ticker_symbol}' not found on NSE/BSE."
-            else:
-                return None, f"Ticker '{ticker_symbol}' not found on NSE/BSE."
-            
+        # Fallback handling for financial statements
         financials = stock.financials
         balance_sheet = stock.balance_sheet
         cashflow = stock.cashflow
         
-        return {
-            "symbol": query_symbol,
-            "info": info,
-            "financials": financials,
-            "balance_sheet": balance_sheet,
-            "cashflow": cashflow
-        }, None
+        return info, financials, balance_sheet, cashflow, stock
     except Exception as e:
-        return None, str(e)
+        return None, None, None, None, None
 
-def analyze_indian_fundamentals(data):
-    info = data["info"]
-    financials = data["financials"]
-    bs = data["balance_sheet"]
-    cf = data["cashflow"]
-    
-    checks = []
-    score = 0
-    max_score = 7 * 10  # 7 rigorous criteria, max 10 points each = 70 points total
-    
-    # 1. Return on Equity (ROE) / ROCE proxy
-    roe = info.get("returnOnEquity", None)
-    roe_val = roe * 100 if roe is not None else 0.0
-    roe_score = 0
-    if roe_val >= 20:
-        roe_score = 10
-        roe_status = "PASS"
-        roe_note = f"Elite return on equity at {roe_val:.2f}% (Target: >= 20%)"
-    elif roe_val >= 15:
-        roe_score = 7
-        roe_status = "PASS"
-        roe_note = f"Healthy ROE at {roe_val:.2f}% (Target: >= 15%)"
-    elif roe_val >= 10:
-        roe_score = 4
-        roe_status = "WARNING"
-        roe_note = f"Moderate ROE at {roe_val:.2f}% (Below 15% threshold)"
-    else:
-        roe_score = 0
-        roe_status = "FAIL"
-        roe_note = f"Low or negative ROE at {roe_val:.2f}%"
-    
-    score += roe_score
-    checks.append({
-        "category": "Capital Efficiency (ROE)",
-        "metric": f"{roe_val:.2f}%",
-        "target": ">= 15-20%",
-        "status": roe_status,
-        "points": f"{roe_score}/10",
-        "note": roe_note
-    })
-    
-    # 2. Debt-to-Equity Ratio
-    debt_to_equity = info.get("debtToEquity", None)
-    if debt_to_equity is not None:
-        de_ratio = debt_to_equity / 100.0 if debt_to_equity > 5 else debt_to_equity
-    else:
-        de_ratio = 0.5  # default conservative assumption if missing
+if symbol:
+    with st.spinner(f"Fetching data and running quantitative filter for {symbol}..."):
+        info, financials, balance_sheet, cashflow, stock = fetch_stock_data(symbol)
         
-    de_score = 0
-    if de_ratio <= 0.5:
-        de_score = 10
-        de_status = "PASS"
-        de_note = f"Virtually debt-free or low debt, D/E at {de_ratio:.2f} (Target: < 1.0)"
-    elif de_ratio <= 1.0:
-        de_score = 7
-        de_status = "PASS"
-        de_note = f"Acceptable balance sheet leverage, D/E at {de_ratio:.2f} (Target: < 1.0)"
-    elif de_ratio <= 2.0:
-        de_score = 3
-        de_status = "WARNING"
-        de_note = f"Elevated debt load, D/E at {de_ratio:.2f}"
+    if not info or 'longName' not in info:
+        st.error(f"Could not retrieve data for `{symbol}`. Please check if the ticker symbol is correct (e.g., must end with `.NS` for NSE or `.BO` for BSE).")
     else:
-        de_score = 0
-        de_status = "FAIL"
-        de_note = f"Heavy debt burden, D/E at {de_ratio:.2f}"
+        # Display Basic Company Info
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Company Name", info.get('longName', symbol))
+        col2.metric("Current Price", f"₹ {info.get('currentPrice', info.get('regularMarketPrice', 'N/A'))}")
+        col3.metric("Market Cap", f"₹ {info.get('marketCap', 0) / 1e7:,.2f} Cr" if info.get('marketCap') else "N/A")
+        col4.metric("Sector", info.get('sector', 'N/A'))
+
+        st.markdown("---")
         
-    score += de_score
-    checks.append({
-        "category": "Balance Sheet Leverage (D/E)",
-        "metric": f"{de_ratio:.2f}",
-        "target": "< 1.0",
-        "status": de_status,
-        "points": f"{de_score}/10",
-        "note": de_note
-    })
-    
-    # 3. Interest Coverage Ratio
-    try:
-        ebit = financials.loc["Operating Income"].iloc[0] if "Operating Income" in financials.index else 0
-        interest_exp = abs(financials.loc["Interest Expense"].iloc[0]) if "Interest Expense" in financials.index else 1
-        interest_coverage = ebit / interest_exp if interest_exp > 0 else 8.0
-    except Exception:
-        interest_coverage = info.get("interestCoverage", 6.0)
-        if interest_coverage is None:
-            interest_coverage = 6.0
+        # --- TIER 1: QUANTITATIVE FILTER (SCREENER METRICS) ---
+        st.subheader("📊 Tier 1: Quantitative Filter (Financial Metrics)")
+        
+        # Extract key metrics safely
+        roce = info.get('returnOnCapitalEmployed', None)
+        roe = info.get('returnOnEquity', None)
+        debt_to_equity = info.get('debtToEquity', None)
+        if debt_to_equity is not None:
+            debt_to_equity = debt_to_equity / 100.0 # yfinance often returns D/E as percentage or ratio
             
-    ic_score = 0
-    if interest_coverage >= 6.0:
-        ic_score = 10
-        ic_status = "PASS"
-        ic_note = f"Robust interest coverage at {interest_coverage:.1f}x (Target: > 4x)"
-    elif interest_coverage >= 4.0:
-        ic_score = 8
-        ic_status = "PASS"
-        ic_note = f"Comfortable interest coverage at {interest_coverage:.1f}x (Target: > 4x)"
-    elif interest_coverage >= 2.0:
-        ic_score = 4
-        ic_status = "WARNING"
-        ic_note = f"Moderate interest coverage at {interest_coverage:.1f}x"
-    else:
-        ic_score = 0
-        ic_status = "FAIL"
-        ic_note = f"Fragile interest coverage at {interest_coverage:.1f}x (High debt servicing risk)"
+        profit_margins = info.get('profitMargins', None)
+        operating_margins = info.get('operatingMargins', None)
         
-    score += ic_score
-    checks.append({
-        "category": "Interest Coverage Ratio",
-        "metric": f"{interest_coverage:.1f}x",
-        "target": ">= 4.0x",
-        "status": ic_status,
-        "points": f"{ic_score}/10",
-        "note": ic_note
-    })
-    
-    # 4. Operating & Net Profit Margins
-    net_margin = info.get("profitMargins", 0.0) * 100
-    margin_score = 0
-    if net_margin >= 15:
-        margin_score = 10
-        margin_status = "PASS"
-        margin_note = f"Strong net profit margin at {net_margin:.2f}% (Indicates pricing power)"
-    elif net_margin >= 8:
-        margin_score = 7
-        margin_status = "PASS"
-        margin_note = f"Healthy net profit margin at {net_margin:.2f}%"
-    elif net_margin >= 3:
-        margin_score = 4
-        margin_status = "WARNING"
-        margin_note = f"Thin net profit margin at {net_margin:.2f}%"
-    else:
-        margin_score = 0
-        margin_status = "FAIL"
-        margin_note = f"Very low or negative net profit margin at {net_margin:.2f}%"
+        q_score = 0
+        max_q_score = 4
         
-    score += margin_score
-    checks.append({
-        "category": "Net Profit Margin",
-        "metric": f"{net_margin:.2f}%",
-        "target": ">= 10%",
-        "status": margin_status,
-        "points": f"{margin_score}/10",
-        "note": margin_note
-    })
-    
-    # 5. Free Cash Flow (FCF) Conversion
-    try:
-        operating_cf = cf.loc["Operating Cash Flow"].iloc[0] if "Operating Cash Flow" in cf.index else 0
-        net_income = financials.loc["Net Income"].iloc[0] if "Net Income" in financials.index else 1
-        fcf_conversion = operating_cf / net_income if net_income != 0 else 1.0
-    except Exception:
-        fcf_conversion = 1.0
+        q1, q2, q3, q4 = st.columns(4)
         
-    fcf_score = 0
-    if fcf_conversion >= 1.0:
-        fcf_score = 10
-        fcf_status = "PASS"
-        fcf_note = f"Excellent cash conversion at {fcf_conversion:.2f}x net income (Real cash earnings)"
-    elif fcf_conversion >= 0.7:
-        fcf_score = 7
-        fcf_status = "PASS"
-        fcf_note = f"Acceptable cash conversion at {fcf_conversion:.2f}x net income"
-    elif fcf_conversion >= 0.4:
-        fcf_score = 4
-        fcf_status = "WARNING"
-        fcf_note = f"Sub-optimal cash conversion at {fcf_conversion:.2f}x net income"
-    else:
-        fcf_score = 0
-        fcf_status = "FAIL"
-        fcf_note = f"Poor cash conversion ({fcf_conversion:.2f}x), profits are not backed by cash"
-        
-    score += fcf_score
-    checks.append({
-        "category": "Earnings Quality (FCF / NI)",
-        "metric": f"{fcf_conversion:.2f}x",
-        "target": ">= 0.8x",
-        "status": fcf_status,
-        "points": f"{fcf_score}/10",
-        "note": fcf_note
-    })
-    
-    # 6. Promoter / Insider Holding
-    insider_pct = info.get("heldPercentInsiders", 0.0) * 100
-    if insider_pct == 0.0:
-        insider_pct = info.get("heldPercentInstitutions", 50.0) # Proxy fallback if insider field missing
-        promoter_note = f"Institutional/Promoter holding proxy at {insider_pct:.1f}%"
-    else:
-        promoter_note = f"Promoter/Insider holding at {insider_pct:.1f}% (Skin in the game)"
-        
-    promoter_score = 0
-    if insider_pct >= 40:
-        promoter_score = 10
-        promoter_status = "PASS"
-    elif insider_pct >= 25:
-        promoter_score = 7
-        promoter_status = "PASS"
-    elif insider_pct >= 15:
-        promoter_score = 4
-        promoter_status = "WARNING"
-    else:
-        promoter_score = 0
-        promoter_status = "FAIL"
-        
-    score += promoter_score
-    checks.append({
-        "category": "Promoter & Insider Holding",
-        "metric": f"{insider_pct:.1f}%",
-        "target": ">= 40%",
-        "status": promoter_status,
-        "points": f"{promoter_score}/10",
-        "note": promoter_note
-    })
-    
-    # 7. Valuation Discipline (P/E Ratio)
-    pe_ratio = info.get("trailingPE", None)
-    if pe_ratio is None or pe_ratio <= 0:
-        pe_ratio = info.get("forwardPE", 25.0)
-    if pe_ratio is None or pe_ratio <= 0:
-        pe_ratio = 30.0
-        
-    pe_score = 0
-    if pe_ratio <= 18:
-        pe_score = 10
-        pe_status = "PASS"
-        pe_note = f"Attractive valuation P/E at {pe_ratio:.1f}x"
-    elif pe_ratio <= 30:
-        pe_score = 8
-        pe_status = "PASS"
-        pe_note = f"Fair valuation P/E at {pe_ratio:.1f}x"
-    elif pe_ratio <= 45:
-        pe_score = 4
-        pe_status = "WARNING"
-        pe_note = f"Rich valuation P/E at {pe_ratio:.1f}x, requires solid growth execution"
-    else:
-        pe_score = 0
-        pe_status = "FAIL"
-        pe_note = f"Expensive valuation P/E at {pe_ratio:.1f}x (High multiple risk)"
-        
-    score += pe_score
-    checks.append({
-        "category": "Valuation Discipline (P/E)",
-        "metric": f"{pe_ratio:.1f}x",
-        "target": "< 25-30x",
-        "status": pe_status,
-        "points": f"{pe_score}/10",
-        "note": pe_note
-    })
-    
-    final_percentage = (score / max_score) * 100
-    return score, max_score, final_percentage, checks
+        with q1:
+            st.markdown("**ROCE (Return on Capital)**")
+            val_roce = f"{roce*100:.2f}%" if roce else "N/A"
+            st.metric("ROCE", val_roce, "Target >= 15%")
+            if roce and roce >= 0.15:
+                q_score += 1
+                st.success("✅ Passed (>=15%)")
+            else:
+                st.warning("⚠️ Below 15% or N/A")
+                
+        with q2:
+            st.markdown("**ROE (Return on Equity)**")
+            val_roe = f"{roe*100:.2f}%" if roe else "N/A"
+            st.metric("ROE", val_roe, "Target >= 15%")
+            if roe and roe >= 0.15:
+                q_score += 1
+                st.success("✅ Passed (>=15%)")
+            else:
+                st.warning("⚠️ Below 15% or N/A")
+                
+        with q3:
+            st.markdown("**Debt-to-Equity Ratio**")
+            val_de = f"{debt_to_equity:.2f}" if debt_to_equity is not None else "N/A"
+            st.metric("Debt / Equity", val_de, "Target < 1.0")
+            if debt_to_equity is not None and debt_to_equity < 1.0:
+                q_score += 1
+                st.success("✅ Passed (<1.0)")
+            else:
+                st.warning("⚠️ High Debt or N/A")
+                
+        with q4:
+            st.markdown("**Operating Margin**")
+            val_om = f"{operating_margins*100:.2f}%" if operating_margins else "N/A"
+            st.metric("Operating Margin", val_om, "Positive / Stable")
+            if operating_margins and operating_margins > 0.05:
+                q_score += 1
+                st.success("✅ Healthy")
+            else:
+                st.warning("⚠️ Low or N/A")
 
-st.title("🇮🇳 Indian Stock Fundamental Scoring Calculator")
-st.markdown("Automate your long-term fundamental analysis checklist for **NSE & BSE** listed companies (inspired by Screener.in metrics). Enter any Indian stock ticker below or select from the preset list to instantly evaluate financial health.")
-
-# Preset Indian Stocks list
-preset_stocks = [
-    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", 
-    "TATAMOTORS", "ITC", "SBIN", "BHARTIARTL", "LICI", 
-    "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", "BAJFINANCE"
-]
-
-st.sidebar.header("🔍 Indian Stock Search")
-selected_preset = st.sidebar.selectbox("Choose Top Indian Stock or Type Below:", ["-- Select Preset --"] + preset_stocks)
-
-manual_input = st.sidebar.text_input("Or Enter NSE/BSE Ticker Symbol:", value="").strip().upper()
-
-# Determine active ticker
-if manual_input:
-    ticker_input = manual_input
-elif selected_preset != "-- Select Preset --":
-    ticker_input = selected_preset
-else:
-    ticker_input = "RELIANCE"
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("""
-### 📋 Indian Long-Term Rules:
-1. **ROE >= 15%**: High capital compounding.
-2. **Debt/Equity < 1.0**: Clean balance sheet.
-3. **Interest Coverage > 4x**: Safe debt servicing.
-4. **Net Margins >= 10%**: Strong pricing power.
-5. **Positive FCF**: Real cash generation.
-6. **Promoter Holding >= 40%**: Skin in the game.
-7. **Reasonable P/E**: Margin of safety.
-""")
-
-analyze_button = st.sidebar.button("Run Fundamental Analysis", type="primary")
-
-if analyze_button or ticker_input:
-    with st.spinner(f"Fetching financial data from NSE/BSE and evaluating fundamentals for `{ticker_input}`..."):
-        data, error = fetch_indian_stock_data(ticker_input)
+        quant_pass = (q_score >= 3)
         
-        if error:
-            st.error(f"Error: {error}. Please verify the ticker symbol (e.g., `RELIANCE`, `TCS`, `INFY`).")
+        st.markdown("---")
+        
+        # --- TIER 2: GOVERNANCE & QUALITATIVE AUDIT ---
+        st.subheader("🛡️ Tier 2: Governance & Qualitative Audit (The Crucial Safeguard)")
+        
+        gov_checks_passed = sum([pledged_shares, clean_rpt, auditor_stability, skin_in_game, economic_moat])
+        
+        g1, g2 = st.columns(2)
+        with g1:
+            st.markdown("""
+            **Governance Verification Summary:**
+            - **Promoter Pledges:** `{}`
+            - **Related-Party Transactions:** `{}`
+            - **Auditor Stability:** `{}`
+            - **Skin in the Game:** `{}`
+            - **Economic Moat:** `{}`
+            """.format(
+                "Pass" if pledged_shares else "Fail/Review",
+                "Clean" if clean_rpt else "Flagged",
+                "Stable" if auditor_stability else "Frequent Changes",
+                "High" if skin_in_game else "Low",
+                "Identified" if economic_moat else "Weak/Unclear"
+            ))
+            
+        with g2:
+            st.info(
+                f"**Governance Score:** {gov_checks_passed} / 5 criteria met.\n\n"
+                "Remember: Quantitative screens are your first filter. Always review annual reports, "
+                "management integrity, and corporate governance before investing in Indian equities."
+            )
+            
+        st.markdown("---")
+        
+        # --- FINAL VERDICT & INVESTMENT STANCE ---
+        st.subheader("🎯 Long-Term Investment Verdict")
+        
+        if quant_pass and gov_checks_passed >= 4:
+            st.success("🟢 **STRONG LONG-TERM COMPOUNDER**: This company has cleared both your quantitative filters and rigorous governance audit. Suitable for deeper due diligence and phased long-term accumulation.")
+        elif quant_pass and gov_checks_passed < 4:
+            st.warning("🟡 **QUALITATIVE AUDIT REQUIRED**: While the numbers look solid on Screener, governance or qualitative checkpoints are unmet or unchecked. **Do not invest** until you personally review the annual report notes for related-party transactions and promoter pledges.")
         else:
-            info = data["info"]
-            company_name = info.get("longName", info.get("shortName", ticker_input))
-            sector = info.get("sector", "N/A")
-            industry = info.get("industry", "N/A")
-            market_cap = info.get("marketCap", 0)
-            current_price = info.get("currentPrice", info.get("regularMarketPrice", 0.0))
-            currency = info.get("currency", "INR")
-            
-            # Display Company Header
-            st.markdown(f"## {company_name} (`{data['symbol']}`)")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                price_str = f"₹{current_price:,.2f}" if currency == "INR" or current_price > 0 else f"{current_price:,.2f}"
-                st.metric("Current Price", price_str)
-            with col2:
-                if market_cap:
-                    mcap_cr = market_cap / 1e7  # Convert to Crores INR roughly
-                    market_cap_str = f"₹{mcap_cr:,.2f} Cr" if mcap_cr < 100000 else f"₹{mcap_cr/1e5:,.2f} Lakh Cr"
-                else:
-                    market_cap_str = "N/A"
-                st.metric("Market Cap", market_cap_str)
-            with col3:
-                st.metric("Sector", sector)
-            with col4:
-                st.metric("Industry", industry)
-            
-            st.markdown("---")
-            
-            # Run Analysis Scorecard
-            score, max_score, percentage, checks = analyze_indian_fundamentals(data)
-            
-            # Overall Score Banner
-            st.subheader("🎯 Overall Fundamental Health Score")
-            
-            col_score_1, col_score_2 = st.columns([1, 2])
-            with col_score_1:
-                st.markdown(f"""
-                    <div style="background-color: #1e293b; padding: 24px; border-radius: 12px; text-align: center; border: 1px solid #334155;">
-                        <h1 style="font-size: 3rem; margin: 0; color: {'#34d399' if percentage >= 70 else '#fbbf24' if percentage >= 50 else '#f87171'};">{score} / {max_score}</h1>
-                        <p style="font-size: 1.2rem; margin-top: 8px; font-weight: 600;">{percentage:.1f}% Score</p>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-            with col_score_2:
-                if percentage >= 75:
-                    verdict = "🟢 **Strong Long-Term Compounder (A-Grade)**: This Indian business exhibits robust capital efficiency, solid promoter backing, and a clean balance sheet matching premier compounding criteria."
-                elif percentage >= 50:
-                    verdict = "🟡 **Moderate / Mixed Fundamentals (B-Grade)**: The company shows solid strengths in several metrics but has specific areas of vulnerability (such as debt or margins) requiring close scrutiny."
-                else:
-                    verdict = "🔴 **High Risk / Weak Fundamentals (C-Grade)**: Multiple red flags detected across return ratios, cash generation, or valuations. Exercise extreme caution."
-                st.info(verdict)
-                
-            st.markdown("---")
-            
-            # Detailed Breakdown Checklist Table
-            st.subheader("📋 Granular Checklist Breakdown (Screener-Style)")
-            
-            for check in checks:
-                status = check["status"]
-                if status == "PASS":
-                    badge = '<span class="pass-badge">PASS</span>'
-                elif status == "WARNING":
-                    badge = '<span class="warning-badge">WARNING</span>'
-                else:
-                    badge = '<span class="fail-badge">FAIL</span>'
-                    
-                st.markdown(f"""
-                    <div style="background-color: #1e293b; padding: 16px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 2;">
-                            <strong style="font-size: 1.1rem; color: #f8fafc;">{check['category']}</strong><br/>
-                            <span style="color: #94a3b8; font-size: 0.9rem;">{check['note']}</span>
-                        </div>
-                        <div style="flex: 1; text-align: center;">
-                            <span style="color: #cbd5e1; font-size: 0.95rem;">Actual: <b>{check['metric']}</b></span><br/>
-                            <span style="color: #64748b; font-size: 0.8rem;">Target: {check['target']}</span>
-                        </div>
-                        <div style="flex: 1; text-align: right;">
-                            {badge}<br/>
-                            <span style="color: #94a3b8; font-size: 0.85rem; margin-top: 4px; display: inline-block;">Points: {check['points']}</span>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-            st.markdown("---")
-            st.success("Analysis complete! Note: Quantitative screens are your first filter. Always review annual reports, management integrity, and corporate governance before investing in Indian equities.")
+            st.error("🔴 **HIGH RISK / AVOID**: The company fails key quantitative thresholds (ROCE/Debt/Margins). Exercise extreme caution or discard from your long-term watch-list.")
 
+        # Additional Company Summary Info
+        with st.expander("📖 Business Summary & Additional Metrics"):
+            st.write(info.get('longBusinessSummary', 'No business summary available.'))
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("PE Ratio", info.get('trailingPE', 'N/A'))
+            col_b.metric("PB Ratio", info.get('priceToBook', 'N/A'))
+            col_c.metric("Dividend Yield", f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "N/A")
 else:
-    st.info("👈 Choose a stock from the preset dropdown or enter an Indian stock ticker symbol in the sidebar to begin analysis.")
+    st.info("👈 Enter a valid Indian stock ticker symbol (e.g., `RELIANCE.NS`, `TCS.NS`) in the sidebar to begin analysis.")
