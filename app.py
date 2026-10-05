@@ -38,7 +38,6 @@ st.markdown("""
 
 # Sidebar Input
 st.sidebar.header("Stock Selection")
-# Popular Indian stocks default list
 default_stocks = [
     "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
     "ITC.NS", "LT.NS", "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", 
@@ -59,23 +58,17 @@ skin_in_game = st.sidebar.checkbox("4. High Promoter Skin in the Game (> 40% or 
 economic_moat = st.sidebar.checkbox("5. Identifiable Economic Moat (Pricing power / Brand / Switching costs)?", value=True)
 
 @st.cache_data(ttl=3600)
-def fetch_stock_data(ticker):
+def fetch_stock_info(ticker_symbol):
     try:
-        stock = yf.Ticker(ticker)
+        stock = yf.Ticker(ticker_symbol)
         info = stock.info
-        
-        # Fallback handling for financial statements
-        financials = stock.financials
-        balance_sheet = stock.balance_sheet
-        cashflow = stock.cashflow
-        
-        return info, financials, balance_sheet, cashflow, stock
+        return info
     except Exception as e:
-        return None, None, None, None, None
+        return None
 
 if symbol:
     with st.spinner(f"Fetching data and running quantitative filter for {symbol}..."):
-        info, financials, balance_sheet, cashflow, stock = fetch_stock_data(symbol)
+        info = fetch_stock_info(symbol)
         
     if not info or 'longName' not in info:
         st.error(f"Could not retrieve data for `{symbol}`. Please check if the ticker symbol is correct (e.g., must end with `.NS` for NSE or `.BO` for BSE).")
@@ -103,7 +96,6 @@ if symbol:
         operating_margins = info.get('operatingMargins', None)
         
         q_score = 0
-        max_q_score = 4
         
         q1, q2, q3, q4 = st.columns(4)
         
@@ -158,20 +150,14 @@ if symbol:
         
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("""
+            st.markdown(f"""
             **Governance Verification Summary:**
-            - **Promoter Pledges:** `{}`
-            - **Related-Party Transactions:** `{}`
-            - **Auditor Stability:** `{}`
-            - **Skin in the Game:** `{}`
-            - **Economic Moat:** `{}`
-            """.format(
-                "Pass" if pledged_shares else "Fail/Review",
-                "Clean" if clean_rpt else "Flagged",
-                "Stable" if auditor_stability else "Frequent Changes",
-                "High" if skin_in_game else "Low",
-                "Identified" if economic_moat else "Weak/Unclear"
-            ))
+            - **Promoter Pledges:** `{"Pass" if pledged_shares else "Fail/Review"}`
+            - **Related-Party Transactions:** `{"Clean" if clean_rpt else "Flagged"}`
+            - **Auditor Stability:** `{"Stable" if auditor_stability else "Frequent Changes"}`
+            - **Skin in the Game:** `{"High" if skin_in_game else "Low"}`
+            - **Economic Moat:** `{"Identified" if economic_moat else "Weak/Unclear"}`
+            """)
             
         with g2:
             st.info(
