@@ -42,14 +42,10 @@ def fetch_stock_data(ticker_symbol):
         return {}, None, None
 
 if symbol:
-    with st.spinner(f"Fetching data and running quantitative filter for {symbol}..."):
+    with st.spinner(f"Analyzing {symbol} via financial statements..."):
         info, financials, balance_sheet = fetch_stock_data(symbol)
         
-    # Robust check: even if yfinance returns sparse info, we proceed using defaults if needed
-    if not info or len(info) < 5:
-        st.warning(f"⚠️ Yahoo Finance returned limited metadata for `{symbol}`. Attempting to extract directly from financial statements...")
-    
-    # Display Basic Company Info with safe fallbacks
+    # Safe metadata extraction
     company_name = info.get('longName', info.get('shortName', symbol))
     current_price = info.get('currentPrice', info.get('regularMarketPrice', info.get('previousClose', 'N/A')))
     market_cap = info.get('marketCap', None)
@@ -72,7 +68,7 @@ if symbol:
 
     operating_margins = info.get('operatingMargins', None)
     
-    # Fallback calculations from balance sheet & financials if needed
+    # Fallback calculations from balance sheet & financials
     try:
         if balance_sheet is not None and not balance_sheet.empty:
             latest_col = balance_sheet.columns[0]
